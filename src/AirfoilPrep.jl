@@ -5,9 +5,13 @@ functions for airfoil processing.
 module AirfoilPrep
 
 # ------------ GENERIC MODULES -------------------------------------------------
+# Trick for avoiding OpenSSL compatibility issues with PyCall
+# https://discourse.julialang.org/t/error-loading-openssl-jll-version-openssl-3-3-0-not-found-when-precompiling-mldatasets/128977/3
+using OpenSSL_jll
+
 using PyCall
 using PyPlot
-# using JLD
+using JLD
 using Dierckx
 using Interpolations
 using Roots
