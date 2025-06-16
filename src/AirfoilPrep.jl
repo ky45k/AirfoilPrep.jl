@@ -7,7 +7,7 @@ module AirfoilPrep
 # ------------ GENERIC MODULES -------------------------------------------------
 using PyCall
 using PyPlot
-using JLD
+# using JLD
 using Dierckx
 using Interpolations
 using Roots
@@ -28,9 +28,11 @@ path_airfoilpreppy = module_path                    # Path to airfoilprep.py
 prepy = PyNULL()                                    # airfoilpreppy module
 
 function __init__()
-    imp = pyimport("imp")
-    (file, filename, data) = imp.find_module("airfoilprep", [path_airfoilpreppy])
-    copy!(prepy, imp.load_module("airfoilprep", file, filename, data))
+    imp = pyimport("importlib.util")
+    spec = imp.spec_from_file_location("airfoilprep", joinpath(path_airfoilpreppy, "airfoilprep.py"))
+    mdl = imp.module_from_spec(spec)
+    spec.loader.exec_module(mdl)
+    copy!(prepy, mdl)
 end
 
 # ------------ HEADERS ---------------------------------------------------------
