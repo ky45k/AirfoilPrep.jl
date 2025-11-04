@@ -114,12 +114,150 @@ function read_polar(file_name::String; path::String="", optargs...)
     return polar
 end
 "Reads a polar as saved from a Polar object"
-function read_polar2(file_name::String; path::String="", optargs...)
-    header = ["Alpha","Cl","Cd","Cm"]
-    data = DataFrames.DataFrame(CSV.File(joinpath(path,file_name), skipto=2, header=header))
-    polar = Polar(-1, data[:,1], data[:,2], data[:,3], data[:,4]; optargs...)
-    return polar
+function parse_first_int(s)
+    s_clean = replace(strip(s), r"[^0-9]" => "")
+    return parse(Int, s_clean)
 end
+
+function parse_first_float(s)
+    m = match(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", s)
+    return m !== nothing ? parse(Float64, m.match) : error("No float found")
+end
+
+function read_polar2(
+    file_name::String;
+    Re::Union{Nothing,Float64}=nothing,
+    path::String="",
+    target_alpha::Union{Nothing,Vector{Float64}}=nothing,
+    optargs...
+)
+    lines = readlines(joinpath(path, file_name))
+    n_blocks = parse_first_int(lines[1])
+    lines = lines[2:end]
+
+    # 1. 블록별로 데이터 읽기
+    blocks = []
+    block_indices = [i for (i, line) in enumerate(lines) if occursin(r"^[0-9]", line) && !occursin("EOT", line)]
+    push!(block_indices, length(lines) + 1)
+
+    for bi in 1:length(block_indices)-1
+        start = block_indices[bi]
+        stop = block_indices[bi+1]-1
+
+        Re_val = parse_first_float(lines[start])
+        header_idx = start + 1
+        data_start = header_idx + 1
+        data = []
+        for i in data_start:stop-1
+            if occursin("EOT", lines[i])
+                break
+            end
+            push!(data, split(strip(lines[i]), ','))
+        end
+        if isempty(data)
+            continue
+        end
+        # 최신 DataFrame 문법 사용
+        df = DataFrame(
+            alpha = parse.(Float64, getindex.(data, 1)),
+            cl    = parse.(Float64, getindex.(data, 2)),
+            cd    = parse.(Float64, getindex.(data, 3)),
+            cm    = parse.(Float64, getindex.(data, 4)),
+        )
+        push!(blocks, (Re_val, df))
+    end
+
+    if isempty(blocks)
+        error("No usable blocks found in $file_name")
+    end
+
+    # 2. 사용할 alpha grid 지정 (명시 없으면 첫 블록 alpha로)
+    target_alpha = target_alpha === nothing ? blocks[1][2][!, :alpha] : target_alpha
+
+    # 3. 각 블록별로 target_alpha에서 값 보간
+    interp_blocks = []
+    for (Re_val, df) in blocks
+        alpha = df[!, :alpha]
+        cl = df[!, :cl]
+        cd = df[!, :cd]
+        cm = df[!, :cm]
+        # 보간함수 (linear)
+        f_cl = LinearInterpolation(alpha, cl, extrapolation_bc=Line())
+        f_cd = LinearInterpolation(alpha, cd, extrapolation_bc=Line())
+        f_cm = LinearInterpolation(alpha, cm, extrapolation_bc=Line())
+        # target_alpha에 대해 보간값 계산
+        cl_new = [f_cl(a) for a in target_alpha]
+        cd_new = [f_cd(a) for a in target_alpha]
+        cm_new = [f_cm(a) for a in target_alpha]
+        push!(interp_blocks, (Re_val, cl_new, cd_new, cm_new))
+    end
+
+    # 4. Re 방향 선형보간
+    res = [b[1] for b in interp_blocks]
+    if isnothing(Re)
+        # 지정이 없으면 첫 블록 반환
+        cl = interp_blocks[1][2]
+        cd = interp_blocks[1][3]
+        cm = interp_blocks[1][4]
+        Re_out = interp_blocks[1][1]
+    else
+        idx = searchsortedfirst(res, Re)
+        if idx == 1
+            cl = interp_blocks[1][2]
+            cd = interp_blocks[1][3]
+            cm = interp_blocks[1][4]
+            Re_out = interp_blocks[1][1]
+        elseif idx > length(interp_blocks)
+            cl = interp_blocks[end][2]
+            cd = interp_blocks[end][3]
+            cm = interp_blocks[end][4]
+            Re_out = interp_blocks[end][1]
+        else
+            Re1, cl1, cd1, cm1 = interp_blocks[idx-1]
+            Re2, cl2, cd2, cm2 = interp_blocks[idx]
+            w = (Re - Re1) / (Re2 - Re1)
+            cl = cl1 .+ (cl2 .- cl1) .* w
+            cd = cd1 .+ (cd2 .- cd1) .* w
+            cm = cm1 .+ (cm2 .- cm1) .* w
+            Re_out = Re
+        end
+    end
+
+
+    # Polar 객체로 반환 (optargs...는 Polar의 추가 키워드 인자)
+    println("디버그 alpha: ", target_alpha)
+    println("  sorted? ", issorted(target_alpha))
+    println("  unique? ", length(target_alpha)==length(unique(target_alpha)))
+    println("  cl: ", cl)
+    println("  cd: ", cd)
+    println("  cm: ", cm)
+    println("  cl NaN?: ", any(isnan, cl), ", cd NaN?: ", any(isnan, cd), ", cm NaN?: ", any(isnan, cm))
+
+    # (1) 오름차순 정렬 및 값 동기화
+    idxs = sortperm(target_alpha)
+    target_alpha_sorted = target_alpha[idxs]
+    cl_sorted = cl[idxs]
+    cd_sorted = cd[idxs]
+    cm_sorted = cm[idxs]
+
+    # (2) 중복제거 (alpha 기준, 가장 앞의 값만 남김)
+    # findall로 unique 인덱스 찾기
+    _, uniq_idx = unique(target_alpha_sorted, returninds=true)
+    uniq_idx = sort(uniq_idx)
+    target_alpha_final = target_alpha_sorted[uniq_idx]
+    cl_final = cl_sorted[uniq_idx]
+    cd_final = cd_sorted[uniq_idx]
+    cm_final = cm_sorted[uniq_idx]
+
+    # (3) 빈 배열 방지
+    if isempty(target_alpha_final) || isempty(cl_final) || isempty(cd_final) || isempty(cm_final)
+        error("read_polar2: 반환 데이터 중 빈 배열 존재! 파일 및 보간 과정을 확인하세요.")
+    end
+
+    return Polar(Re_out, target_alpha_final, cl_final, cd_final, cm_final; optargs...)
+end
+
+
 "Saves a polar in Polar format"
 function save_polar2(self::Polar, file_name::String; path::String="")
     _file_name = file_name*(occursin(".", file_name) ? "" : ".csv")

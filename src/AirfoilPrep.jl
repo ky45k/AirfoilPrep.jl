@@ -5,10 +5,6 @@ functions for airfoil processing.
 module AirfoilPrep
 
 # ------------ GENERIC MODULES -------------------------------------------------
-# Trick for avoiding OpenSSL compatibility issues with PyCall
-# https://discourse.julialang.org/t/error-loading-openssl-jll-version-openssl-3-3-0-not-found-when-precompiling-mldatasets/128977/3
-using OpenSSL_jll
-
 using PyCall
 using PyPlot
 using JLD
@@ -17,8 +13,9 @@ using Interpolations
 using Roots
 using LaTeXStrings
 using Statistics: mean
+using DataFrames
 import CSV
-import DataFrames
+
 
 # ------------ FLOW CODES ------------------------------------------------------
 # Xfoil from https://github.com/byuflowlab/Xfoil.jl
@@ -32,11 +29,9 @@ path_airfoilpreppy = module_path                    # Path to airfoilprep.py
 prepy = PyNULL()                                    # airfoilpreppy module
 
 function __init__()
-    imp = pyimport("importlib.util")
-    spec = imp.spec_from_file_location("airfoilprep", joinpath(path_airfoilpreppy, "airfoilprep.py"))
-    mdl = imp.module_from_spec(spec)
-    spec.loader.exec_module(mdl)
-    copy!(prepy, mdl)
+    imp = pyimport("imp")
+    (file, filename, data) = imp.find_module("airfoilprep", [path_airfoilpreppy])
+    copy!(prepy, imp.load_module("airfoilprep", file, filename, data))
 end
 
 # ------------ HEADERS ---------------------------------------------------------

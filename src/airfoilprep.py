@@ -64,6 +64,8 @@ class Polar(object):
         self.cm = np.array(cm)
 
     def blend(self, other, weight):
+        if self.alpha.size == 0 or other.alpha.size == 0:
+            raise ValueError(f"blend: 빈 배열. self.alpha={self.alpha}, other.alpha={other.alpha}")
         """Blend this polar with another one with the specified weighting
 
         Parameters
@@ -542,6 +544,13 @@ class Airfoil(object):
 
         # save type of polar we are using
         self.polar_type = polars[0].__class__
+        
+
+    def generate_section_polars(self, Re_list):
+        print("called generate_section_polars!!")
+        return [self.getPolar(Re) for Re in Re_list]
+
+
 
     @classmethod
     def initFromAerodynFile(cls, aerodynFile, polarType=Polar):
@@ -567,13 +576,12 @@ class Airfoil(object):
         f.readline()
         description = f.readline().rstrip()  # remove newline
         f.readline()
-        numTables = int(f.readline().split()[0])
+        numTables = int(f.readline().split()[0].replace(',', '').strip())
 
         # loop through tables
         for i in list(range(numTables)):
-
-            # read Reynolds number
-            Re = float(f.readline().split()[0])*1e6
+        # Re값 읽을 때도 쉼표 제거!
+            Re = float(f.readline().split()[0].replace(',', '').strip())
 
             # read Aerodyn parameters
             param = [0]*8
